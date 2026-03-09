@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 from model_cyclegan import ResnetGenerator, NLayerDiscriminator, ImageBuffer
 from dataset_loader import SketchPhotoDataset
+from arcface import ArcFaceID
 
 # ---------- Config ----------
 SKETCH_DIR = "dataset/sketches"
@@ -13,6 +14,7 @@ BATCH_SIZE = 1           # CycleGAN standard: batch_size=1
 EPOCHS = 200
 LR = 2e-4
 LAMBDA_CYCLE = 10.0
+LAMBDA_ID = 5.0       # ArcFace identity preservation weight
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 OUT_DIR = "output_cyclegan"
 os.makedirs(OUT_DIR, exist_ok=True)
@@ -53,6 +55,9 @@ scheduler_D = torch.optim.lr_scheduler.LambdaLR(optimizer_D, lr_lambda)
 criterion_GAN = torch.nn.MSELoss()   # LSGAN
 criterion_cycle = torch.nn.L1Loss()
 
+# ---------- ArcFace (identity preservation) ----------
+arcface = ArcFaceID(device=DEVICE)
+
 # ---------- Buffers ----------
 buffer_fake_sketch = ImageBuffer()
 buffer_fake_photo = ImageBuffer()
@@ -84,10 +89,15 @@ for epoch in range(EPOCHS):
         recovered_photo = G_S2P(fake_sketch)
         loss_cycle_photo = criterion_cycle(recovered_photo, photo)
 
+        # -- Identity preservation loss (ArcFace) --
+        # Generated photo should have same identity as real photo
+        loss_id = arcface.identity_loss(fake_photo, photo)
+
         # -- Total generator loss --
         loss_G = (
             loss_GAN_S2P + loss_GAN_P2S
             + LAMBDA_CYCLE * (loss_cycle_sketch + loss_cycle_photo)
+            + LAMBDA_ID * loss_id
         )
 
         loss_G.backward()
@@ -132,6 +142,7 @@ for epoch in range(EPOCHS):
         f"D: {loss_D.item():.4f}  "
         f"G: {loss_G.item():.4f}  "
         f"cyc: {(loss_cycle_sketch + loss_cycle_photo).item():.4f}  "
+        f"id: {loss_id.item():.4f}  "
         f"lr: {scheduler_G.get_last_lr()[0]:.6f}"
     )
 
